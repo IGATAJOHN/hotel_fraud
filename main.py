@@ -1,5 +1,7 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
 import pandas as pd
 import numpy as np
 import joblib
@@ -18,7 +20,18 @@ BEST_THRESHOLD = 0.42  # <-- optimized threshold
 
 
 app = FastAPI(title="Hotel Fraud Detection API")
+
+# Allow all origins for testing
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class BookingRequest(BaseModel):
+
     data: dict
 @app.post("/score")
 def score_booking(request: BookingRequest):
