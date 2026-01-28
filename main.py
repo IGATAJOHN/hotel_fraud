@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
 
 import pandas as pd
 import numpy as np
@@ -31,8 +33,52 @@ app.add_middleware(
 )
 
 class BookingRequest(BaseModel):
-
     data: dict
+
+class Room(BaseModel):
+    room_number: str
+    floor: int
+    is_clean: bool
+    is_occupied: bool
+    distance_to_elevator: float  # in meters/arbitrary units
+
+class AssignmentRequest(BaseModel):
+    rooms: List[Room]
+
+@app.post("/assign-room")
+def assign_room(request: AssignmentRequest):
+    """
+    Assigns the optimal room based on:
+    1. Clean status (must be clean)
+    2. Vacancy (must be unoccupied)
+    3. Lowest floor (preference for lower floors)
+    4. Proximity to elevator (nearest first)
+    """
+    # Filter for Clean and Vacant rooms
+    available_rooms = [
+        r for r in request.rooms 
+        if r.is_clean and not r.is_occupied
+    ]
+
+    if not available_rooms:
+        return {"status": "error", "message": "No clean and vacant rooms available"}
+
+    # Sort based on rules: Floor ASC, then Distance to Elevator ASC
+    # Python's sort is stable, but we can just use a multi-key lambda
+    available_rooms.sort(key=lambda x: (x.floor, x.distance_to_elevator))
+
+    assigned_room = available_rooms[0]
+
+    return {
+        "status": "success",
+        "assigned_room": assigned_room,
+        "criteria": {
+            "floor": assigned_room.floor,
+            "dist_to_elevator": assigned_room.distance_to_elevator,
+            "total_available": len(available_rooms)
+        }
+    }
+
 @app.post("/score")
 def score_booking(request: BookingRequest):
     # Convert input to DataFrame
