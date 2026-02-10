@@ -1,22 +1,31 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
-
+from datetime import date
 
 import pandas as pd
 import numpy as np
 import joblib
 import shap
 
-# Load artifacts
+# Load fraud detection artifacts
 try:
     model = joblib.load("model.pkl")
     explainer = joblib.load("explainer.pkl")
     FEATURE_COLUMNS = joblib.load("feature_columns.pkl")
 except Exception as e:
-    print(f"Error loading artifacts: {e}")
-    raise RuntimeError("Failed to load required model artifacts.")
+    print(f"Error loading fraud detection artifacts: {e}")
+    raise RuntimeError("Failed to load required fraud detection model artifacts.")
+
+# Load demand forecasting artifacts
+try:
+    demand_model = joblib.load("demand_forecast_lgbm_v1.pkl")
+    demand_features = joblib.load("demand_forecast_features_v1.pkl")
+    demand_metadata = joblib.load("demand_forecast_metadata_v1.pkl")
+except Exception as e:
+    print(f"Error loading demand forecasting artifacts: {e}")
+    raise RuntimeError("Failed to load required demand forecasting model artifacts.")
 
 BEST_THRESHOLD = 0.42  # <-- optimized threshold
 
@@ -44,6 +53,57 @@ class Room(BaseModel):
 
 class AssignmentRequest(BaseModel):
     rooms: List[Room]
+
+class DemandHistoryRow(BaseModel):
+    date: date
+    occupancy: float
+    adr: float
+    revpar: float
+    avg_lead_time: float
+    short_lead_ratio: float
+    cancellation_rate: float
+    refund_rate: float
+    local_event: int
+    tourism_trend: float
+    competitor_price: float
+
+class DemandForecastRequest(BaseModel):
+    history: List[DemandHistoryRow]
+    forecast_days: int = 7
+
+def compute_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.sort_values("date").reset_index(drop=True)
+
+    # Time features
+    df["day_of_week"] = df["date"].dt.dayofweek
+    df["week"] = df["date"].dt.isocalendar().week.astype(int)
+    df["month"] = df["date"].dt.month
+    df["is_weekend"] = df["day_of_week"].isin([5, 6]).astype(int)
+
+    # Lag features
+    df["occupancy_lag_1"] = df["occupancy"].shift(1)
+    df["occupancy_lag_7"] = df["occupancy"].shift(7)
+    df["adr_lag_7"] = df["adr"].shift(7)
+
+    # Rolling features
+    df["occ_roll_3"] = df["occupancy"].rolling(3).mean()
+    df["occ_roll_7"] = df["occupancy"].rolling(7).mean()
+    df["adr_roll_7"] = df["adr"].rolling(7).mean()
+    df["occ_std_7"] = df["occupancy"].rolling(7).std()
+
+    return df
+
+def prepare_demand_features(history: List[DemandHistoryRow]) -> pd.DataFrame:
+    df = pd.DataFrame([h.dict() for h in history])
+    df["date"] = pd.to_datetime(df["date"])
+    
+    df = compute_features(df)
+    df = df.dropna().reset_index(drop=True)
+
+    if df.empty:
+        raise ValueError("Not enough historical data to compute features")
+
+    return df
 
 @app.post("/assign-room")
 def assign_room(request: AssignmentRequest):
@@ -136,3 +196,55 @@ def score_booking(request: BookingRequest):
         "top_reasons": top_features
     }
 
+@app.post("/forecast/demand")
+def forecast_demand(request: DemandForecastRequest):
+    try:
+        # Initial dataframe setup
+        history_df = pd.DataFrame([h.dict() for h in request.history])
+        history_df["date"] = pd.to_datetime(history_df["date"])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    forecasts = []
+    
+    # Recursive forecasting loop
+    for step in range(request.forecast_days):
+        # Re-compute features on the current history
+        feature_df = compute_features(history_df.copy())
+        
+        # Check if we have enough data to generate features for the last row
+        last_row = feature_df.iloc[[-1]] 
+        
+        # Ensure required features are present and not NaN
+        if last_row[demand_features].isnull().any().any():
+             raise HTTPException(status_code=400, detail=f"Not enough history to forecast day {step+1}. Need more data for lag features.")
+
+        # Predict
+        X = last_row[demand_features]
+        pred = float(demand_model.predict(X)[0])
+        pred = max(0.0, min(1.0, pred))  # clamp occupancy
+        
+        # Next Forecast Date
+        last_date = history_df["date"].iloc[-1]
+        next_date = last_date + pd.Timedelta(days=1)
+        
+        forecasts.append({
+            "date": next_date.date(),
+            "predicted_occupancy": round(pred, 3)
+        })
+        
+        # Append prediction to history_df for next iteration
+        # We carry forward exogenous variables from the last known day
+        new_row = history_df.iloc[-1].copy()
+        new_row["date"] = next_date
+        new_row["occupancy"] = pred # Update with predicted occupancy
+        
+        # Append using loc to avoid deprecated append
+        history_df.loc[len(history_df)] = new_row
+
+    return {
+        "model_version": demand_metadata["version"],
+        "mae": demand_metadata["mae"],
+        "forecast_days": request.forecast_days,
+        "forecast": forecasts
+    }
