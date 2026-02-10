@@ -41,6 +41,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+def health_check():
+    return {
+        "status": "ok",
+        "service": "Hotel AI API",
+        "models": ["fraud_detection", "demand_forecasting"]
+    }
+
 class BookingRequest(BaseModel):
     data: dict
 
