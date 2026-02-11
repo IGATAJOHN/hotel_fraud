@@ -214,6 +214,8 @@ def forecast_demand(request: DemandForecastRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     forecasts = []
+    residual_std = demand_metadata.get("residual_std", 0.1013)
+    z_score = 1.96
     
     # Recursive forecasting loop
     for step in range(request.forecast_days):
@@ -231,6 +233,10 @@ def forecast_demand(request: DemandForecastRequest):
         X = last_row[demand_features]
         pred = float(demand_model.predict(X)[0])
         pred = max(0.0, min(1.0, pred))  # clamp occupancy
+
+        # Confidence Interval
+        lower = pred - z_score * residual_std
+        upper = pred + z_score * residual_std
         
         # Next Forecast Date
         last_date = history_df["date"].iloc[-1]
@@ -238,11 +244,15 @@ def forecast_demand(request: DemandForecastRequest):
         
         forecasts.append({
             "date": next_date.date(),
-            "predicted_occupancy": round(pred, 3)
+            "predicted_occupancy": round(pred, 3),
+            "confidence_interval": {
+                "lower": round(max(0.0, lower), 3),
+                "upper": round(min(1.0, upper), 3),
+                "level": "95%"
+            }
         })
         
         # Append prediction to history_df for next iteration
-        # We carry forward exogenous variables from the last known day
         new_row = history_df.iloc[-1].copy()
         new_row["date"] = next_date
         new_row["occupancy"] = pred # Update with predicted occupancy
