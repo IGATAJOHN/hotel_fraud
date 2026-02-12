@@ -86,6 +86,8 @@ class PricingRequest(BaseModel):
     upper_ci: float
     competitor_price: float
     season: str
+    elasticity: Optional[float] = None
+    historical_data: Optional[List[dict]] = None
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("date").reset_index(drop=True)
@@ -275,7 +277,53 @@ def forecast_demand(request: DemandForecastRequest):
         "forecast": forecasts
     }
 
+def estimate_elasticity(history: List[dict]) -> float:
+    """
+    Estimates price elasticity of demand using simple log-linear regression:
+    log(Occupancy) = alpha + beta * log(ADR)
+    The coefficient 'beta' is the price elasticity.
+    """
+    if len(history) < 5:
+        return -1.5 # Default inelastic assumption for hotels
+    
+    df = pd.DataFrame(history)
+    
+    # Filter for valid data
+    df = df[(df["occupancy"] > 0) & (df["adr"] > 0)]
+    
+    if len(df) < 3:
+        return -1.5
+
+    # Log transformation
+    y = np.log(df["occupancy"])
+    X = np.log(df["adr"])
+    
+    # Simple linear regression (slope)
+    # beta = sum((x - mean_x) * (y - mean_y)) / sum((x - mean_x)^2)
+    X_mean = np.mean(X)
+    y_mean = np.mean(y)
+    
+    numerator = np.sum((X - X_mean) * (y - y_mean))
+    denominator = np.sum((X - X_mean)**2)
+    
+    if denominator == 0:
+        return -1.5
+        
+    beta = float(numerator / denominator)
+    
+    # Sanity check: Elasticity for hotels is typically between -0.5 and -3.0
+    return max(-5.0, min(-0.1, beta))
+
 def dynamic_pricing_logic(data: PricingRequest):
+    # Determine elasticity
+    elasticity = data.elasticity
+    if elasticity is None and data.historical_data:
+        elasticity = float(estimate_elasticity(data.historical_data))
+    
+    # Fallback to inelastic default if still None/0
+    if not elasticity:
+        elasticity = -1.5
+
     adjustment = 0.0
     demand_level = "Moderate"
 
@@ -295,21 +343,33 @@ def dynamic_pricing_logic(data: PricingRequest):
         adjustment = -0.10
         demand_level = "Weak"
 
+    # Elasticity Modifier: 
+    # If guests are sensitive (e.g., -3.0), we dampen the increase.
+    # If guests are inelastic (e.g., -0.5), we can push the increase higher.
+    # Baseline elasticity = -1.5. 
+    elasticity_modifier = float(-1.5 / elasticity)
+    elasticity_modifier = max(0.5, min(2.0, elasticity_modifier))
+    
+    # Apply modifier only to price increases (to avoid dropping price too fast on sensitive demand)
+    if adjustment > 0:
+        adjustment *= elasticity_modifier
+
     # Seasonal boost
     if data.season.lower() in ["peak", "peak season", "holiday"]:
         adjustment += 0.05
 
-    recommended_price = data.current_adr * (1 + adjustment)
+    recommended_price = float(data.current_adr * (1 + adjustment))
 
     # Competitor guardrail
-    max_price = data.competitor_price * 1.15
+    max_price = float(data.competitor_price * 1.15)
     recommended_price = min(recommended_price, max_price)
 
     return {
         "demand_level": demand_level,
-        "adjustment_percent": round(adjustment * 100, 2),
-        "recommended_price": round(recommended_price, 2),
-        "guardrail_applied": recommended_price == max_price
+        "estimated_elasticity": round(float(elasticity), 3),
+        "adjustment_percent": round(float(adjustment) * 100, 2),
+        "recommended_price": round(float(recommended_price), 2),
+        "guardrail_applied": bool(recommended_price == max_price)
     }
 
 @app.post("/pricing/recommend")
