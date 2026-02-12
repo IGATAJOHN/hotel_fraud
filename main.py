@@ -312,6 +312,16 @@ def dynamic_pricing_logic(data: PricingRequest):
         "guardrail_applied": recommended_price == max_price
     }
 
-@app.post("/recommend-price")
+@app.post("/pricing/recommend")
 def recommend_price(request: PricingRequest):
-    return dynamic_pricing_logic(request)
+    result = dynamic_pricing_logic(request)
+
+    return {
+        "current_adr": request.current_adr,
+        "forecast_occupancy": request.forecast_occupancy,
+        "confidence_interval": {
+            "lower": request.lower_ci,
+            "upper": request.upper_ci
+        },
+        "pricing_decision": result
+    }
