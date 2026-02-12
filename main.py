@@ -79,6 +79,14 @@ class DemandForecastRequest(BaseModel):
     history: List[DemandHistoryRow]
     forecast_days: int = 7
 
+class PricingRequest(BaseModel):
+    current_adr: float
+    forecast_occupancy: float
+    lower_ci: float
+    upper_ci: float
+    competitor_price: float
+    season: str
+
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("date").reset_index(drop=True)
 
@@ -266,3 +274,44 @@ def forecast_demand(request: DemandForecastRequest):
         "forecast_days": request.forecast_days,
         "forecast": forecasts
     }
+
+def dynamic_pricing_logic(data: PricingRequest):
+    adjustment = 0.0
+    demand_level = "Moderate"
+
+    if data.upper_ci > 0.85:
+        adjustment = 0.12
+        demand_level = "Very High"
+    elif data.upper_ci > 0.70:
+        adjustment = 0.07
+        demand_level = "High"
+    elif data.upper_ci > 0.55:
+        adjustment = 0.0
+        demand_level = "Moderate"
+    elif data.upper_ci > 0.40:
+        adjustment = -0.06
+        demand_level = "Soft"
+    else:
+        adjustment = -0.10
+        demand_level = "Weak"
+
+    # Seasonal boost
+    if data.season.lower() in ["peak", "peak season", "holiday"]:
+        adjustment += 0.05
+
+    recommended_price = data.current_adr * (1 + adjustment)
+
+    # Competitor guardrail
+    max_price = data.competitor_price * 1.15
+    recommended_price = min(recommended_price, max_price)
+
+    return {
+        "demand_level": demand_level,
+        "adjustment_percent": round(adjustment * 100, 2),
+        "recommended_price": round(recommended_price, 2),
+        "guardrail_applied": recommended_price == max_price
+    }
+
+@app.post("/recommend-price")
+def recommend_price(request: PricingRequest):
+    return dynamic_pricing_logic(request)
