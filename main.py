@@ -27,6 +27,23 @@ except Exception as e:
     print(f"Error loading demand forecasting artifacts: {e}")
     raise RuntimeError("Failed to load required demand forecasting model artifacts.")
 
+# Load in-stay anomaly detection artifacts
+try:
+    anomaly_model = joblib.load("in_stay_anomaly_v1.pkl")
+    anomaly_scaler = joblib.load("in_stay_scaler_v1.pkl")
+    # FINAL 13-feature set verified from scaler.feature_names_in_
+    in_stay_anomaly_features = [
+        'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
+        'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
+        'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
+        'access_rate', 'service_intensity', 'stay_length'
+    ]
+    feature_means = joblib.load("in_stay_feature_means_v1.pkl")
+    feature_stds = joblib.load("in_stay_feature_stds_v1.pkl")
+except Exception as e:
+    print(f"Error loading in-stay anomaly detection artifacts: {e}")
+    raise RuntimeError("Failed to load required in-stay anomaly detection model artifacts.")
+
 BEST_THRESHOLD = 0.42  # <-- optimized threshold
 
 
@@ -46,7 +63,7 @@ def health_check():
     return {
         "status": "ok",
         "service": "Hotel AI API",
-        "models": ["fraud_detection", "demand_forecasting"]
+        "models": ["fraud_detection", "demand_forecasting", "in-stay_monitoring"]
     }
 
 class BookingRequest(BaseModel):
@@ -88,6 +105,21 @@ class PricingRequest(BaseModel):
     season: str
     elasticity: Optional[float] = None
     historical_data: Optional[List[dict]] = None
+
+class InStayRequest(BaseModel):
+    room_access_count: int
+    dnd_hours: float
+    visitor_count: int
+    noise_complaints: int
+    service_usage_intensity: float # Will map to 'service_usage_count'
+    stay_length: int
+    cleaning_duration_minutes: Optional[float] = 0.0
+    maintenance_issues: Optional[int] = 0
+    maintenance_resolution_hours: Optional[float] = 0.0
+    staff_overtime_hours: Optional[float] = 0.0
+    guest_rating_staff: Optional[float] = 5.0
+    access_rate: Optional[float] = 0.0
+    service_intensity: Optional[float] = 0.0
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("date").reset_index(drop=True)
@@ -275,6 +307,62 @@ def forecast_demand(request: DemandForecastRequest):
         "mae": demand_metadata["mae"],
         "forecast_days": request.forecast_days,
         "forecast": forecasts
+    }
+
+def explain_anomaly(input_df: pd.DataFrame):
+    explanations = []
+
+    for col in in_stay_anomaly_features:
+        value = input_df.iloc[0][col]
+        mean = feature_means[col]
+        std = feature_stds[col]
+
+        z_score = (value - mean) / std if std != 0 else 0
+
+        explanations.append({
+            "feature": col,
+            "value": round(float(value), 3),
+            "z_score": round(float(z_score), 3),
+            "direction": "High" if z_score > 0 else "Low"
+        })
+
+    # sort by absolute deviation
+    explanations = sorted(
+        explanations,
+        key=lambda x: abs(x["z_score"]),
+        reverse=True
+    )
+
+    return explanations[:3]
+
+@app.post("/monitor/in-stay")
+def detect_in_stay_anomaly(request: InStayRequest):
+    # Map API fields to model features (handling naming variations in artifacts)
+    data = request.dict()
+    # Map 'service_usage_intensity' to 'service_usage_count' as seen in the model
+    data['service_usage_count'] = data.pop('service_usage_intensity')
+    
+    input_df = pd.DataFrame([data])
+    
+    # Ensure all columns exist and are in the EXACT order the scaler expects
+    input_df = input_df.reindex(columns=in_stay_anomaly_features, fill_value=0)
+
+    X_scaled = anomaly_scaler.transform(input_df)
+
+    score = anomaly_model.decision_function(X_scaled)[0]
+    prediction = anomaly_model.predict(X_scaled)[0]
+
+    explanation = explain_anomaly(input_df)
+
+    return {
+        "anomaly_score": round(float(score), 4),
+        "status": "Anomaly" if prediction == -1 else "Normal",
+        "risk_level": (
+            "High" if score < -0.05 else
+            "Moderate" if score < 0 else
+            "Low"
+        ),
+        "top_contributing_factors": explanation
     }
 
 def estimate_elasticity(history: List[dict]) -> float:
