@@ -577,11 +577,12 @@
                 if (data) options.body = JSON.stringify(data);
 
                 const res = await fetch(endpoint, options);
+                const text = await res.text();
                 let json;
                 try {
-                    json = await res.json();
+                    json = JSON.parse(text);
                 } catch (e) {
-                    json = { error: "Failed to parse response JSON", raw: await res.text() };
+                    json = { error: "Failed to parse response JSON", raw: text };
                 }
 
                 consoleEl.innerText = JSON.stringify(json, null, 4);
