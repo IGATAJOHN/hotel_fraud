@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hotel AI Playground | Intelligence Dashboard</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;600;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep: #0a0a0c;
+            --bg-surface: #121217;
+            --primary: #8b5cf6;
+            --primary-glow: rgba(139, 92, 246, 0.4);
+            --secondary: #3b82f6;
+            --accent: #10b981;
+            --text-main: #f3f4f6;
+            --text-dim: #9ca3af;
+            --border: rgba(255, 255, 255, 0.08);
+            --glass: rgba(18, 18, 23, 0.7);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-deep);
+            color: var(--text-main);
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* Layout */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 280px 1fr 450px;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border);
+            padding: 2rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .logo {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #fff, var(--primary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1rem;
+        }
+
+        .nav-section {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .nav-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-dim);
+            padding-left: 0.75rem;
+        }
+
+        .nav-item {
+            padding: 0.75rem 1rem;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: var(--text-dim);
+            font-weight: 500;
+        }
+
+        .nav-item:hover {
+            background: rgba(255, 255, 255, 0.03);
+            color: #fff;
+        }
+
+        .nav-item.active {
+            background: var(--primary-glow);
+            color: #fff;
+            border: 1px solid rgba(139, 92, 246, 0.2);
+        }
+
+        /* Main Content */
+        .main-content {
+            padding: 2.5rem;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .section-header {
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .section-desc {
+            color: var(--text-dim);
+            max-width: 600px;
+        }
+
+        /* Form Controls */
+        .card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            margin-bottom: 2rem;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-dim);
+        }
+
+        input,
+        select,
+        textarea {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 0.875rem 1rem;
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: rgba(139, 92, 246, 0.05);
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 1rem;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 20px var(--primary-glow);
+        }
+
+        /* Result Panel */
+        .result-panel {
+            background: #000;
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 2rem;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .console {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.9rem;
+            overflow: auto;
+            color: #10b981;
+            white-space: pre-wrap;
+        }
+
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+        }
+
+        .badge-error {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+        }
+
+        /* Tabs */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="dashboard">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="logo">Hotel Intelligence</div>
+
+            <nav class="nav-section">
+                <span class="nav-label">Core Models</span>
+                <div class="nav-item active" onclick="showTab('fraud')">
+                    <span>🛡️</span> Fraud Detection
+                </div>
+                <div class="nav-item" onclick="showTab('demand')">
+                    <span>📈</span> Demand Forecast
+                </div>
+                <div class="nav-item" onclick="showTab('pricing')">
+                    <span>💎</span> Dynamic Pricing
+                </div>
+                <div class="nav-item" onclick="showTab('anomaly')">
+                    <span>🔍</span> In-Stay Monitoring
+                </div>
+                <div class="nav-item" onclick="showTab('recom')">
+                    <span>✨</span> Upsell & Loyalty
+                </div>
+            </nav>
+
+            <nav class="nav-section">
+                <span class="nav-label">Management</span>
+                <div class="nav-item" onclick="showTab('admin')">
+                    <span>⚙️</span> Model Registry
+                </div>
+                <div class="nav-item" onclick="showTab('compliance')">
+                    <span>📋</span> Compliance Reports
+                </div>
+            </nav>
+        </div>
+
+        <!-- Main Workspace -->
+        <div class="main-content">
+            <!-- Fraud Tab -->
+            <div id="fraud" class="tab-content active">
+                <div class="section-header">
+                    <h1 class="section-title">Fraud Risk Analysis</h1>
+                    <p class="section-desc">Analyze booking data to detect suspicious patterns and automated fraud
+                        attempts.</p>
+                </div>
+                <div class="card">
+                    <div class="form-grid">
+                        <div class="input-group">
+                            <label>Lead Time (Days)</label>
+                            <input type="number" id="fraud_lt" value="10">
+                        </div>
+                        <div class="input-group">
+                            <label>Booking Hour (0-23)</label>
+                            <input type="number" id="fraud_hour" value="14">
+                        </div>
+                        <div class="input-group">
+                            <label>Guest Nationality</label>
+                            <input type="text" id="fraud_nat" value="DE">
+                        </div>
+                        <div class="input-group">
+                            <label>Room Segmentation</label>
+                            <select id="fraud_seg">
+                                <option value="Transient">Transient</option>
+                                <option value="Group">Group</option>
+                                <option value="Corporate">Corporate</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn-primary" onclick="testFraud()">Run Risk Assessment</button>
+                </div>
+            </div>
+
+            <!-- Demand Tab -->
+            <div id="demand" class="tab-content">
+                <div class="section-header">
+                    <h1 class="section-title">Demand Forecasting</h1>
+                    <p class="section-desc">Predict occupancy and ADR trends using recursive time-series modeling.</p>
+                </div>
+                <div class="card">
+                    <div class="input-group">
+                        <label>Forecast Days</label>
+                        <input type="number" id="demand_days" value="7">
+                    </div>
+                    <div class="input-group" style="margin-top: 1rem;">
+                        <label>History (JSON Array)</label>
+                        <textarea id="demand_history" rows="8" style="font-family: monospace; font-size: 0.85rem;">[
+    {"date": "2024-03-01", "occupancy": 0.65, "adr": 120, "revpar": 78, "avg_lead_time": 12, "short_lead_ratio": 0.2, "cancellation_rate": 0.1, "refund_rate": 0.05, "local_event": 0, "tourism_trend": 1.0, "competitor_price": 125},
+    {"date": "2024-03-02", "occupancy": 0.70, "adr": 125, "revpar": 87, "avg_lead_time": 10, "short_lead_ratio": 0.3, "cancellation_rate": 0.1, "refund_rate": 0.05, "local_event": 0, "tourism_trend": 1.1, "competitor_price": 130},
+    {"date": "2024-03-03", "occupancy": 0.85, "adr": 150, "revpar": 127, "avg_lead_time": 15, "short_lead_ratio": 0.15, "cancellation_rate": 0.05, "refund_rate": 0.02, "local_event": 1, "tourism_trend": 1.2, "competitor_price": 160},
+    {"date": "2024-03-04", "occupancy": 0.75, "adr": 130, "revpar": 97, "avg_lead_time": 11, "short_lead_ratio": 0.2, "cancellation_rate": 0.08, "refund_rate": 0.04, "local_event": 0, "tourism_trend": 1.0, "competitor_price": 135},
+    {"date": "2024-03-05", "occupancy": 0.60, "adr": 110, "revpar": 66, "avg_lead_time": 8, "short_lead_ratio": 0.4, "cancellation_rate": 0.12, "refund_rate": 0.06, "local_event": 0, "tourism_trend": 0.9, "competitor_price": 115},
+    {"date": "2024-03-06", "occupancy": 0.72, "adr": 128, "revpar": 92, "avg_lead_time": 12, "short_lead_ratio": 0.25, "cancellation_rate": 0.09, "refund_rate": 0.03, "local_event": 0, "tourism_trend": 1.0, "competitor_price": 125},
+    {"date": "2024-03-07", "occupancy": 0.80, "adr": 140, "revpar": 112, "avg_lead_time": 14, "short_lead_ratio": 0.18, "cancellation_rate": 0.04, "refund_rate": 0.02, "local_event": 0, "tourism_trend": 1.1, "competitor_price": 145}
+]</textarea>
+                    </div>
+                    <button class="btn-primary" onclick="testDemand()">Generate Forecast</button>
+                </div>
+            </div>
+
+            <!-- Pricing Tab -->
+            <div id="pricing" class="tab-content">
+                <div class="section-header">
+                    <h1 class="section-title">Dynamic Pricing</h1>
+                    <p class="section-desc">Optimize ADR using price elasticity and competitor market data.</p>
+                </div>
+                <div class="card">
+                    <div class="form-grid">
+                        <div class="input-group">
+                            <label>Current ADR</label>
+                            <input type="number" id="price_adr" value="120">
+                        </div>
+                        <div class="input-group">
+                            <label>Forecast Occupancy</label>
+                            <input type="number" id="price_occ" value="0.75" step="0.1">
+                        </div>
+                        <div class="input-group">
+                            <label>Occupancy Upper CI</label>
+                            <input type="number" id="price_upper" value="0.82" step="0.1">
+                        </div>
+                        <div class="input-group">
+                            <label>Competitor Price</label>
+                            <input type="number" id="price_comp" value="135">
+                        </div>
+                        <div class="input-group">
+                            <label>Season</label>
+                            <select id="price_season">
+                                <option value="High">High Season</option>
+                                <option value="Shoulder">Shoulder</option>
+                                <option value="Low">Low Season</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn-primary" onclick="testPricing()">Calculate optimal Price</button>
+                </div>
+            </div>
+
+            <!-- Recommendations Tab -->
+            <div id="recom" class="tab-content">
+                <div class="section-header">
+                    <h1 class="section-title">Upsell & Loyalty</h1>
+                    <p class="section-desc">Drive incremental revenue and guest lifetime value with AI offers.</p>
+                </div>
+                <div class="card">
+                    <div class="form-grid">
+                        <div class="input-group">
+                            <label>Stay Length</label>
+                            <input type="number" id="rec_stay" value="4">
+                        </div>
+                        <div class="input-group">
+                            <label>Service Usage (count)</label>
+                            <input type="number" id="rec_usage" value="5">
+                        </div>
+                        <div class="input-group">
+                            <label>Guest Rating (avg)</label>
+                            <input type="number" id="rec_rating" value="4.5" step="0.1">
+                        </div>
+                        <div class="input-group">
+                            <label>Room Price Paid</label>
+                            <input type="number" id="rec_price" value="150">
+                        </div>
+                        <div class="input-group">
+                            <label>Booking History Count</label>
+                            <input type="number" id="rec_history" value="8">
+                        </div>
+                        <div class="input-group">
+                            <label>Channel Source</label>
+                            <select id="rec_source">
+                                <option value="direct">Direct</option>
+                                <option value="ota">OTA</option>
+                                <option value="corporate">Corporate</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn-primary" onclick="testRecom()">Get Personalizations</button>
+                </div>
+            </div>
+
+            <!-- Anomaly Tab -->
+            <div id="anomaly" class="tab-content">
+                <div class="section-header">
+                    <h1 class="section-title">In-Stay Anomaly Detection</h1>
+                    <p class="section-desc">Monitor real-time guest behavior to detect security risks or service
+                        failures.</p>
+                </div>
+                <div class="card">
+                    <div class="form-grid">
+                        <div class="input-group">
+                            <label>Room Access Count</label>
+                            <input type="number" id="ano_access" value="12">
+                        </div>
+                        <div class="input-group">
+                            <label>DND Hours</label>
+                            <input type="number" id="ano_dnd" value="18">
+                        </div>
+                        <div class="input-group">
+                            <label>Visitor Count</label>
+                            <input type="number" id="ano_visitors" value="3">
+                        </div>
+                        <div class="input-group">
+                            <label>Noise Complaints</label>
+                            <input type="number" id="ano_noise" value="1">
+                        </div>
+                        <div class="input-group">
+                            <label>Service Intensity</label>
+                            <input type="number" id="ano_service" value="0.2" step="0.1">
+                        </div>
+                        <div class="input-group">
+                            <label>Stay Length</label>
+                            <input type="number" id="ano_stay" value="2">
+                        </div>
+                    </div>
+                    <button class="btn-primary" onclick="testAnomaly()">Run Anomaly Scan</button>
+                </div>
+            </div>
+
+            <!-- Admin Tab -->
+            <div id="admin" class="tab-content">
+                <div class="section-header">
+                    <h1 class="section-title">Model Registry & A/B</h1>
+                    <p class="section-desc">Manage model versions, traffic splitting, and critical rollbacks.</p>
+                </div>
+                <div class="card">
+                    <button class="btn-primary" style="background: var(--secondary);" onclick="listModels()">List Active
+                        Models</button>
+
+                    <div style="margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
+                        <h3 style="margin-bottom: 1rem;">Update Traffic Split (Canary)</h3>
+                        <div class="form-grid">
+                            <div class="input-group">
+                                <label>Service</label>
+                                <select id="split_service">
+                                    <option value="fraud">Fraud Detection</option>
+                                    <option value="demand">Demand Forecast</option>
+                                    <option value="in-stay">In-Stay Anomaly</option>
+                                </select>
+                            </div>
+                            <div class="input-group">
+                                <label>Split Configuration (v1:v2)</label>
+                                <input type="text" id="split_config" placeholder="v1:0.8, v2:0.2"
+                                    value="v1:0.5, v2:0.5">
+                            </div>
+                        </div>
+                        <button class="btn-primary" onclick="updateSplit()">Apply Traffic Split</button>
+                    </div>
+
+                    <div style="margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
+                        <h3 style="margin-bottom: 1rem; color: #ef4444;">Emergency Rollback</h3>
+                        <div class="input-group">
+                            <label>Target Service</label>
+                            <select id="rollback_service">
+                                <option value="fraud">Fraud Detection</option>
+                                <option value="demand">Demand Forecast</option>
+                                <option value="in-stay">In-Stay Anomaly</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" style="background: #ef4444;" onclick="rollback()">Immediate Revert
+                            to Stable (v1)</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compliance Tab -->
+            <div id="compliance" class="tab-content">
+                <div class="section-header">
+                    <h1 class="section-title">Compliance & SAR Reports</h1>
+                    <p class="section-desc">Audit automatically filed Suspicious Activity Reports for high-risk
+                        bookings.</p>
+                </div>
+                <div class="card">
+                    <button class="btn-primary" onclick="getCompliance()">Fetch Latest SAR Filings</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Sidebar -->
+        <div class="result-panel">
+            <div class="result-header">
+                <h2>API Response</h2>
+                <div id="status_badge" class="badge">Idle</div>
+            </div>
+            <div id="console" class="console">Ready to test intelligence...</div>
+        </div>
+    </div>
+
+    <script>
+        function showTab(id) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }
+
+        async function apiCall(endpoint, method, data) {
+            const consoleEl = document.getElementById('console');
+            const badge = document.getElementById('status_badge');
+
+            consoleEl.innerText = "Calling " + endpoint + "...";
+            badge.className = "badge";
+            badge.innerText = "Loading";
+            badge.style.background = "rgba(59, 130, 246, 0.2)";
+
+            try {
+                const options = {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' }
+                };
+                if (data) options.body = JSON.stringify(data);
+
+                const res = await fetch(endpoint, options);
+                let json;
+                try {
+                    json = await res.json();
+                } catch (e) {
+                    json = { error: "Failed to parse response JSON", raw: await res.text() };
+                }
+
+                consoleEl.innerText = JSON.stringify(json, null, 4);
+
+                if (res.ok) {
+                    badge.innerText = "Success " + res.status;
+                    badge.className = "badge badge-success";
+                } else {
+                    badge.innerText = "Error " + res.status;
+                    badge.className = "badge badge-error";
+                    // If 422, explain to the user
+                    if (res.status === 422) {
+                        consoleEl.innerText = "VALIDATION ERROR (422):\n" +
+                            "One or more fields in your JSON are missing or have the wrong type.\n\n" +
+                            JSON.stringify(json, null, 4);
+                    }
+                }
+            } catch (err) {
+                consoleEl.innerText = "Fatal Error: " + err.message;
+                badge.innerText = "Failed";
+                badge.className = "badge badge-error";
+            }
+        }
+
+        function testFraud() {
+            const data = {
+                data: {
+                    lead_time_days: parseInt(document.getElementById('fraud_lt').value),
+                    checkin_time_hour: parseInt(document.getElementById('fraud_hour').value),
+                    market_segment: document.getElementById('fraud_seg').value,
+                    segment_id: 1, // mock
+                    is_repeated_guest: 0
+                }
+            };
+            apiCall('/score', 'POST', data);
+        }
+
+        function testDemand() {
+            let history;
+            try {
+                history = JSON.parse(document.getElementById('demand_history').value);
+            } catch (e) {
+                alert("Invalid JSON in history field: " + e.message);
+                return;
+            }
+
+            // SMART HANDLER: Detect if user pasted the whole object or just the array
+            let finalData;
+            if (history && !Array.isArray(history) && history.history && Array.isArray(history.history)) {
+                // User pasted the full structure: { history: [], forecast_days: X }
+                finalData = history;
+            } else {
+                // User pasted just the array: [ {}, {} ] or an object that isn't the full structure
+                finalData = {
+                    history: history,
+                    forecast_days: parseInt(document.getElementById('demand_days').value)
+                };
+            }
+            apiCall('/forecast/demand', 'POST', finalData);
+        }
+
+        function testPricing() {
+            const data = {
+                current_adr: parseFloat(document.getElementById('price_adr').value),
+                forecast_occupancy: parseFloat(document.getElementById('price_occ').value),
+                lower_ci: parseFloat(document.getElementById('price_occ').value) - 0.1,
+                upper_ci: parseFloat(document.getElementById('price_upper').value),
+                competitor_price: parseFloat(document.getElementById('price_comp').value),
+                season: document.getElementById('price_season').value
+            };
+            apiCall('/pricing/recommend', 'POST', data);
+        }
+
+        function testAnomaly() {
+            const data = {
+                room_access_count: parseInt(document.getElementById('ano_access').value),
+                dnd_hours: parseFloat(document.getElementById('ano_dnd').value),
+                visitor_count: parseInt(document.getElementById('ano_visitors').value),
+                noise_complaints: parseInt(document.getElementById('ano_noise').value),
+                service_usage_intensity: parseFloat(document.getElementById('ano_service').value),
+                stay_length: parseInt(document.getElementById('ano_stay').value)
+            };
+            apiCall('/monitor/in-stay', 'POST', data);
+        }
+
+        function testRecom() {
+            const data = {
+                stay_length: parseInt(document.getElementById('rec_stay').value),
+                service_usage_count: parseInt(document.getElementById('rec_usage').value),
+                guest_rating_staff: parseFloat(document.getElementById('rec_rating').value),
+                refund_rate: 0.1,
+                room_price: parseFloat(document.getElementById('rec_price').value),
+                booking_history_count: parseInt(document.getElementById('rec_history').value),
+                cancellation_history: 0,
+                refund_history: 0,
+                channel_source: document.getElementById('rec_source').value
+            };
+            apiCall('/recommendations', 'POST', data);
+        }
+
+        function listModels() { apiCall('/admin/models', 'GET'); }
+        function getCompliance() { apiCall('/compliance/reports', 'GET'); }
+
+        function updateSplit() {
+            const service = document.getElementById('split_service').value;
+            const configStr = document.getElementById('split_config').value;
+            const split = {};
+            configStr.split(',').forEach(part => {
+                const [v, p] = part.split(':');
+                split[v.trim()] = parseFloat(p.trim());
+            });
+            apiCall('/admin/models/split', 'POST', { service, split });
+        }
+
+        function rollback() {
+            const service = document.getElementById('rollback_service').value;
+            apiCall('/admin/models/rollback', 'POST', { service, target_version: 'v1' });
+        }
+    </script>
+</body>
+
+</html>

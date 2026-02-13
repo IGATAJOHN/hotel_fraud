@@ -1,4 +1,6 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -9,40 +11,91 @@ import numpy as np
 import joblib
 import shap
 
-# Load fraud detection artifacts
-try:
-    model = joblib.load("model.pkl")
-    explainer = joblib.load("explainer.pkl")
-    FEATURE_COLUMNS = joblib.load("feature_columns.pkl")
-except Exception as e:
-    print(f"Error loading fraud detection artifacts: {e}")
-    raise RuntimeError("Failed to load required fraud detection model artifacts.")
+import random
+import uuid
 
-# Load demand forecasting artifacts
-try:
-    demand_model = joblib.load("demand_forecast_lgbm_v1.pkl")
-    demand_features = joblib.load("demand_forecast_features_v1.pkl")
-    demand_metadata = joblib.load("demand_forecast_metadata_v1.pkl")
-except Exception as e:
-    print(f"Error loading demand forecasting artifacts: {e}")
-    raise RuntimeError("Failed to load required demand forecasting model artifacts.")
+# --- A/B Testing & Rollback Infrastructure ---
+class ModelRegistry:
+    def __init__(self):
+        self.models = {
+            "fraud": {
+                "active_version": "v1",
+                "versions": {
+                    "v1": {"path": "model.pkl", "explainer": "explainer.pkl", "features": "feature_columns.pkl"},
+                    "v2": {"path": "model.pkl", "explainer": "explainer.pkl", "features": "feature_columns.pkl"}
+                },
+                "traffic_split": {"v1": 1.0} # Version -> Percentage (0.0 to 1.0)
+            },
+            "demand": {
+                "active_version": "v1",
+                "versions": {
+                    "v1": {"path": "demand_forecast_lgbm_v1.pkl", "features": "demand_forecast_features_v1.pkl", "metadata": "demand_forecast_metadata_v1.pkl"}
+                },
+                "traffic_split": {"v1": 1.0}
+            },
+            "in-stay": {
+                "active_version": "v1",
+                "versions": {
+                    "v1": {
+                        "path": "in_stay_anomaly_v1.pkl", 
+                        "scaler": "in_stay_scaler_v1.pkl",
+                        "means": "in_stay_feature_means_v1.pkl",
+                        "stds": "in_stay_feature_stds_v1.pkl"
+                    }
+                },
+                "traffic_split": {"v1": 1.0}
+            }
+        }
+        self.loaded_artifacts = {}
 
-# Load in-stay anomaly detection artifacts
+    def load_version(self, service: str, version: str):
+        config = self.models[service]["versions"][version]
+        artifacts = {}
+        try:
+            for key, filename in config.items():
+                artifacts[key] = joblib.load(filename)
+            self.loaded_artifacts[f"{service}:{version}"] = artifacts
+            print(f"Loaded {service} model {version} successfully.")
+        except Exception as e:
+            print(f"Error loading {service} model {version}: {e}")
+            raise RuntimeError(f"Critical error loading {service}:{version}")
+
+    def get_model(self, service: str):
+        # Weighted random selection for A/B testing
+        split = self.models[service]["traffic_split"]
+        versions = list(split.keys())
+        weights = list(split.values())
+        selected_version = random.choices(versions, weights=weights)[0]
+        
+        key = f"{service}:{selected_version}"
+        if key not in self.loaded_artifacts:
+            self.load_version(service, selected_version)
+            
+        return selected_version, self.loaded_artifacts[key]
+
+# Initialize Registry
+registry = ModelRegistry()
+
+# Pre-load production versions
 try:
-    anomaly_model = joblib.load("in_stay_anomaly_v1.pkl")
-    anomaly_scaler = joblib.load("in_stay_scaler_v1.pkl")
-    # FINAL 13-feature set verified from scaler.feature_names_in_
-    in_stay_anomaly_features = [
-        'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
-        'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
-        'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
-        'access_rate', 'service_intensity', 'stay_length'
-    ]
-    feature_means = joblib.load("in_stay_feature_means_v1.pkl")
-    feature_stds = joblib.load("in_stay_feature_stds_v1.pkl")
+    registry.load_version("fraud", "v1")
+    registry.load_version("demand", "v1")
+    registry.load_version("in-stay", "v1")
 except Exception as e:
-    print(f"Error loading in-stay anomaly detection artifacts: {e}")
-    raise RuntimeError("Failed to load required in-stay anomaly detection model artifacts.")
+    print(f"Initial model loading failed: {e}")
+
+# Global accessors (backward compatibility where needed, but endpoints should use registry.get_model)
+FEATURE_COLUMNS = registry.loaded_artifacts["fraud:v1"]["features"]
+in_stay_anomaly_features = [
+    'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
+    'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
+    'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
+    'access_rate', 'service_intensity', 'stay_length'
+]
+feature_means = registry.loaded_artifacts["in-stay:v1"]["means"]
+feature_stds = registry.loaded_artifacts["in-stay:v1"]["stds"]
+
+BEST_THRESHOLD = 0.42  # <-- optimized threshold
 
 BEST_THRESHOLD = 0.42  # <-- optimized threshold
 
@@ -59,12 +112,22 @@ app.add_middleware(
 )
 
 @app.get("/")
+def home():
+    return FileResponse("static/index.html")
+
+@app.get("/health")
 def health_check():
     return {
         "status": "ok",
         "service": "Hotel AI API",
         "models": ["fraud_detection", "demand_forecasting", "in-stay_monitoring"]
     }
+
+@app.get("/dashboard")
+def dashboard():
+    return FileResponse("static/index.html")
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class BookingRequest(BaseModel):
     data: dict
@@ -96,6 +159,14 @@ class DemandForecastRequest(BaseModel):
     history: List[DemandHistoryRow]
     forecast_days: int = 7
 
+class SplitRequest(BaseModel):
+    service: str
+    split: dict
+
+class RollbackRequest(BaseModel):
+    service: str
+    target_version: str = "v1"
+
 class PricingRequest(BaseModel):
     current_adr: float
     forecast_occupancy: float
@@ -120,6 +191,29 @@ class InStayRequest(BaseModel):
     guest_rating_staff: Optional[float] = 5.0
     access_rate: Optional[float] = 0.0
     service_intensity: Optional[float] = 0.0
+
+class RecommendationRequest(BaseModel):
+    stay_length: int
+    service_usage_count: int
+    guest_rating_staff: float
+    refund_rate: float
+    room_price: float
+    booking_history_count: int
+    cancellation_history: int
+    refund_history: int
+    channel_source: str # e.g., "direct", "ota", "corporate"
+
+
+class SARRecord(BaseModel):
+    booking_id: str
+    fraud_score: float
+    timestamp: date
+    narrative: str
+    top_indicators: List[str]
+    status: str = "Filed"
+
+# In-memory storage for auto-filed reports (mock database)
+sar_reports: List[SARRecord] = []
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("date").reset_index(drop=True)
@@ -191,6 +285,12 @@ def assign_room(request: AssignmentRequest):
 
 @app.post("/score")
 def score_booking(request: BookingRequest):
+    # Get model from registry
+    version, artifacts = registry.get_model("fraud")
+    model = artifacts["path"]
+    explainer = artifacts["explainer"]
+    features = artifacts["features"]
+
     # Convert input to DataFrame
     X = pd.DataFrame([request.data])
 
@@ -202,12 +302,7 @@ def score_booking(request: BookingRequest):
     X = X.rename(columns=ALIASES)
 
     # Ensure all required columns exist, fill missing with 0, and order correctly
-    # Note: Using 0 is a placeholder. For higher accuracy, you should use the 
-    # median/mode from your training data, but 0 is safe for stability.
-    X = X.reindex(columns=FEATURE_COLUMNS, fill_value=0)
-
-
-
+    X = X.reindex(columns=features, fill_value=0)
 
     # Predict probability
     fraud_proba = model.predict_proba(X)[0, 1]
@@ -218,16 +313,13 @@ def score_booking(request: BookingRequest):
     # SHAP explanation
     try:
         shap_values = explainer.shap_values(X)
-        # Handle different SHAP output formats (sometimes it's a list for multiclass)
         if isinstance(shap_values, list):
-            # For binary classification, typically index [1] or just [0] depending on explainer
-            # Using [0] if it's a single array in a list
             vals = shap_values[0] if len(shap_values) == 1 else shap_values[1]
         else:
             vals = shap_values
 
         contrib = pd.DataFrame({
-            "feature": FEATURE_COLUMNS,
+            "feature": features,
             "shap_value": vals[0]
         })
 
@@ -240,14 +332,71 @@ def score_booking(request: BookingRequest):
         print(f"SHAP explanation error: {e}")
         top_features = ["Explanation unavailable"]
 
+    # SAR Auto-Filing (Critical Threshold = 0.85)
+    filed_sar = False
+    if fraud_proba >= 0.85:
+        narrative = generate_sar_narrative(fraud_proba, top_features, request.data)
+        import uuid
+        sar_record = SARRecord(
+            booking_id=str(uuid.uuid4())[:8],
+            fraud_score=round(float(fraud_proba), 4),
+            timestamp=date.today(),
+            narrative=narrative,
+            top_indicators=top_features
+        )
+        sar_reports.append(sar_record)
+        filed_sar = True
+
     return {
         "fraud_probability": round(float(fraud_proba), 4),
         "flagged_for_review": bool(flagged),
-        "top_reasons": top_features
+        "top_reasons": top_features,
+        "model_info": {
+            "service": "fraud",
+            "version": version
+        },
+        "compliance": {
+            "sar_filed": filed_sar,
+            "filing_status": "Success" if filed_sar else "N/A"
+        }
     }
+
+@app.get("/compliance/reports")
+def get_compliance_reports():
+    return {
+        "total_filed": len(sar_reports),
+        "reports": sar_reports
+    }
+
+def generate_sar_narrative(score: float, top_features: List[str], input_data: dict) -> str:
+    """
+    Generates a formal SAR narrative based on fraud indicators.
+    """
+    date_str = date.today().isoformat()
+    indicators_str = ", ".join(top_features)
+    
+    narrative = (
+        f"Suspicious Activity Report generated on {date_str}. "
+        f"The system detected a high-risk booking with a probability score of {round(score, 4)}. "
+        f"Primary indicators of concern include: {indicators_str}. "
+    )
+    
+    # Add context from input data if available
+    if "lead_time" in input_data or "lead_time_days" in input_data:
+        lt = input_data.get("lead_time") or input_data.get("lead_time_days")
+        narrative += f"Of particular note is the lead time of {lt} days. "
+        
+    narrative += "This booking has been intercepted and flagged for mandatory compliance review."
+    return narrative
 
 @app.post("/forecast/demand")
 def forecast_demand(request: DemandForecastRequest):
+    # Get model from registry
+    version, artifacts = registry.get_model("demand")
+    demand_model = artifacts["path"]
+    demand_features = artifacts["features"]
+    demand_metadata = artifacts["metadata"]
+
     try:
         # Initial dataframe setup
         history_df = pd.DataFrame([h.dict() for h in request.history])
@@ -303,8 +452,11 @@ def forecast_demand(request: DemandForecastRequest):
         history_df.loc[len(history_df)] = new_row
 
     return {
-        "model_version": demand_metadata["version"],
-        "mae": demand_metadata["mae"],
+        "model_version": version,
+        "model_metadata": {
+            "version": demand_metadata["version"],
+            "mae": demand_metadata["mae"]
+        },
         "forecast_days": request.forecast_days,
         "forecast": forecasts
     }
@@ -337,6 +489,11 @@ def explain_anomaly(input_df: pd.DataFrame):
 
 @app.post("/monitor/in-stay")
 def detect_in_stay_anomaly(request: InStayRequest):
+    # Get model from registry
+    version, artifacts = registry.get_model("in-stay")
+    anomaly_model = artifacts["path"]
+    anomaly_scaler = artifacts["scaler"]
+    
     # Map API fields to model features (handling naming variations in artifacts)
     data = request.dict()
     # Map 'service_usage_intensity' to 'service_usage_count' as seen in the model
@@ -362,7 +519,58 @@ def detect_in_stay_anomaly(request: InStayRequest):
             "Moderate" if score < 0 else
             "Low"
         ),
-        "top_contributing_factors": explanation
+        "top_contributing_factors": explanation,
+        "model_info": {
+            "service": "in-stay",
+            "version": version
+        }
+    }
+
+# --- Management Endpoints ---
+@app.get("/admin/models")
+def list_models():
+    """Returns the current model registry state."""
+    return registry.models
+
+@app.post("/admin/models/split")
+def update_traffic_split(request: SplitRequest):
+    """Updates the traffic split for a specific service."""
+    service = request.service
+    split = request.split
+    
+    if service not in registry.models:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    # Validation
+    if not np.isclose(sum(split.values()), 1.0):
+        raise HTTPException(status_code=400, detail="Traffic split must sum to 1.0")
+    
+    for v in split.keys():
+        if v not in registry.models[service]["versions"]:
+            raise HTTPException(status_code=400, detail=f"Version {v} not found for {service}")
+            
+    registry.models[service]["traffic_split"] = split
+    return {"status": "success", "new_split": split}
+
+@app.post("/admin/models/rollback")
+def rollback_model(request: RollbackRequest):
+    """Instantly reverts traffic to a stable version."""
+    service = request.service
+    target_version = request.target_version
+    
+    if service not in registry.models:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    if target_version not in registry.models[service]["versions"]:
+        raise HTTPException(status_code=400, detail=f"Target version {target_version} not found")
+        
+    registry.models[service]["traffic_split"] = {target_version: 1.0}
+    registry.models[service]["active_version"] = target_version
+    
+    return {
+        "status": "success", 
+        "message": f"Service {service} rolled back to {target_version}",
+        "new_split": registry.models[service]["traffic_split"]
     }
 
 def estimate_elasticity(history: List[dict]) -> float:
@@ -473,3 +681,67 @@ def recommend_price(request: PricingRequest):
         },
         "pricing_decision": result
     }
+
+@app.post("/recommendations")
+def generate_recommendations(request: RecommendationRequest):
+    upsell_score = compute_upsell_score(request)
+    upsell_offer = generate_upsell_offer(upsell_score)
+    
+    loyalty_score = compute_loyalty_score(request)
+    loyalty_tier = generate_loyalty_action(loyalty_score)
+    
+    return {
+        "upsell": {
+            "score": round(upsell_score, 2),
+            "recommendation": upsell_offer
+        },
+        "loyalty": {
+            "score": round(loyalty_score, 2),
+            "tier": loyalty_tier
+        }
+    }
+
+def compute_upsell_score(data: RecommendationRequest):
+    score = 0
+    if data.stay_length >= 3:
+        score += 0.2
+    if data.service_usage_count > 2:
+        score += 0.2
+    if data.guest_rating_staff >= 4:
+        score += 0.2
+    if data.refund_rate < 0.1:
+        score += 0.2
+    if data.room_price > 120:
+        score += 0.2
+    return min(score, 1.0)
+
+def generate_upsell_offer(score: float):
+    if score > 0.8:
+        return {"offer": "Premium Suite Upgrade", "discount": 0, "confidence": "High"}
+    elif score > 0.6:
+        return {"offer": "Late Checkout + Breakfast Bundle", "discount": 5, "confidence": "Medium"}
+    elif score > 0.4:
+        return {"offer": "Spa Discount", "discount": 10, "confidence": "Moderate"}
+    else:
+        return {"offer": "No Upsell", "confidence": "Low"}
+
+def compute_loyalty_score(data: RecommendationRequest):
+    score = 0
+    score += min(data.booking_history_count * 0.1, 0.4)
+    if data.cancellation_history == 0:
+        score += 0.2
+    if data.refund_history == 0:
+        score += 0.2
+    if data.channel_source == "direct":
+        score += 0.2
+    return min(score, 1.0)
+
+def generate_loyalty_action(score: float):
+    if score > 0.8:
+        return "Gold Tier – Exclusive Member Perks"
+    elif score > 0.6:
+        return "Silver Tier – 10% Rebooking Discount"
+    elif score > 0.4:
+        return "Bronze Tier – 5% Next Stay Coupon"
+    else:
+        return "Standard Guest"
