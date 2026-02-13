@@ -38,9 +38,7 @@ class ModelRegistry:
                 "versions": {
                     "v1": {
                         "path": "in_stay_anomaly_v1.pkl", 
-                        "scaler": "in_stay_scaler_v1.pkl",
-                        "means": "in_stay_feature_means_v1.pkl",
-                        "stds": "in_stay_feature_stds_v1.pkl"
+                        "scaler": "in_stay_scaler_v1.pkl"
                     }
                 },
                 "traffic_split": {"v1": 1.0}
@@ -84,22 +82,7 @@ try:
 except Exception as e:
     print(f"Initial model loading failed: {e}")
 
-# Global accessors (backward compatibility where needed, but endpoints should use registry.get_model)
-FEATURE_COLUMNS = registry.loaded_artifacts["fraud:v1"]["features"]
-in_stay_anomaly_features = [
-    'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
-    'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
-    'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
-    'access_rate', 'service_intensity', 'stay_length'
-]
-feature_means = registry.loaded_artifacts["in-stay:v1"]["means"]
-feature_stds = registry.loaded_artifacts["in-stay:v1"]["stds"]
-
-BEST_THRESHOLD = 0.42  # <-- optimized threshold
-
-BEST_THRESHOLD = 0.42  # <-- optimized threshold
-
-
+# --- App Initialization ---
 app = FastAPI(title="Hotel Fraud Detection API")
 
 # Allow all origins for testing
@@ -461,13 +444,30 @@ def forecast_demand(request: DemandForecastRequest):
         "forecast": forecasts
     }
 
-def explain_anomaly(input_df: pd.DataFrame):
+def explain_anomaly(input_df: pd.DataFrame, artifacts: dict):
     explanations = []
+    
+    # Define features inside function to avoid global dependencies
+    features = [
+        'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
+        'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
+        'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
+        'access_rate', 'service_intensity', 'stay_length'
+    ]
+    
+    # Try to get means and stds from artifacts, fallback to simple placeholder if missing
+    means = artifacts.get("means")
+    stds = artifacts.get("stds")
+    
+    if not means or not stds:
+        return [{"feature": "Stats Unavailable", "value": 0, "z_score": 0, "direction": "N/A"}]
 
-    for col in in_stay_anomaly_features:
+    for col in features:
+        if col not in input_df.columns:
+            continue
         value = input_df.iloc[0][col]
-        mean = feature_means[col]
-        std = feature_stds[col]
+        mean = means.get(col, 0)
+        std = stds.get(col, 1)
 
         z_score = (value - mean) / std if std != 0 else 0
 
@@ -501,15 +501,19 @@ def detect_in_stay_anomaly(request: InStayRequest):
     
     input_df = pd.DataFrame([data])
     
-    # Ensure all columns exist and are in the EXACT order the scaler expects
-    input_df = input_df.reindex(columns=in_stay_anomaly_features, fill_value=0)
+    input_df = input_df.reindex(columns=[
+        'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
+        'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
+        'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
+        'access_rate', 'service_intensity', 'stay_length'
+    ], fill_value=0)
 
     X_scaled = anomaly_scaler.transform(input_df)
 
     score = anomaly_model.decision_function(X_scaled)[0]
     prediction = anomaly_model.predict(X_scaled)[0]
 
-    explanation = explain_anomaly(input_df)
+    explanation = explain_anomaly(input_df, artifacts)
 
     return {
         "anomaly_score": round(float(score), 4),
