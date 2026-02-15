@@ -1,3 +1,4 @@
+# Use Python 3.10, 3.11, or 3.12. CatBoost has no wheel for 3.14 and will fail to build.
 fastapi
 uvicorn
 pandas
@@ -5,3 +6,6 @@ numpy
 joblib
 shap
 catboost
+lightgbm
+openai
+google-generativeai

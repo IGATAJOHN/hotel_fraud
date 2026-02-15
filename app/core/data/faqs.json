@@ -1,0 +1,108 @@
+{
+  "hotels": [
+    {
+      "hotel_id": "hotel_001",
+      "hotel_name": "Ivilla Square – Downtown",
+      "faqs": [
+        {
+          "id": "checkin_time",
+          "intents": [
+            "what time is check in",
+            "when can i check in",
+            "arrival time",
+            "early check in"
+          ],
+          "answer": "Check-in starts at 2:00 PM. Early check-in is subject to availability."
+        },
+        {
+          "id": "checkout_time",
+          "intents": [
+            "what time is checkout",
+            "when do i need to leave",
+            "late checkout"
+          ],
+          "answer": "Checkout is at 11:00 AM. Late checkout may be available for an additional fee."
+        },
+        {
+          "id": "breakfast_info",
+          "intents": [
+            "is breakfast included",
+            "breakfast time",
+            "free breakfast"
+          ],
+          "answer": "Breakfast is served daily from 7:00 AM to 10:00 AM in the main restaurant."
+        },
+        {
+          "id": "wifi_access",
+          "intents": [
+            "wifi password",
+            "internet access",
+            "free wifi"
+          ],
+          "answer": "Free Wi-Fi is available throughout the hotel. Login details are provided at check-in."
+        },
+        {
+          "id": "parking_info",
+          "intents": [
+            "parking",
+            "is parking available",
+            "where can i park"
+          ],
+          "answer": "On-site parking is available for guests at no additional charge."
+        }
+      ]
+    },
+
+    {
+      "hotel_id": "hotel_002",
+      "hotel_name": "Ivilla Square – Airport",
+      "faqs": [
+        {
+          "id": "checkin_time",
+          "intents": [
+            "check in time",
+            "arrival time",
+            "early check in"
+          ],
+          "answer": "Check-in starts at 1:00 PM."
+        },
+        {
+          "id": "checkout_time",
+          "intents": [
+            "checkout time",
+            "late checkout",
+            "when do i leave"
+          ],
+          "answer": "Checkout is at 12:00 PM."
+        },
+        {
+          "id": "airport_shuttle",
+          "intents": [
+            "airport shuttle",
+            "airport pickup",
+            "transport to airport"
+          ],
+          "answer": "A complimentary airport shuttle runs every 30 minutes. Please contact the front desk to schedule pickup."
+        },
+        {
+          "id": "breakfast_info",
+          "intents": [
+            "breakfast",
+            "is breakfast free",
+            "breakfast hours"
+          ],
+          "answer": "Complimentary breakfast is served from 6:00 AM to 9:30 AM."
+        },
+        {
+          "id": "parking_info",
+          "intents": [
+            "parking",
+            "long term parking",
+            "car parking"
+          ],
+          "answer": "Long-term parking is available for an additional fee."
+        }
+      ]
+    }
+  ]
+}

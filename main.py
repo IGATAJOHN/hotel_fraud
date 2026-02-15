@@ -32,6 +32,33 @@ BEST_THRESHOLD = 0.42  # <-- optimized threshold
 
 app = FastAPI(title="Hotel Fraud Detection API")
 
+# FAQ bot (Gemini); routes in app.faq.routes
+from app.faq.routes import router as faq_router
+from app.guest_risk.routes import router as guest_risk_router
+
+app.include_router(faq_router)
+app.include_router(guest_risk_router)
+
+
+@app.get("/")
+def root():
+    """API info and links. Use /docs for interactive API docs."""
+    return {
+        "name": "Hotel Fraud Detection API",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "faq": {
+            "list_hotels": "GET /faq/hotels",
+            "ask_question": "POST /faq/ask (body: {\"question\": \"...\", \"hotel_id\": \"...\"})",
+        },
+        "guest_risk": {
+            "compute_profile": "POST /api/v1/guest/risk-profile (body: {\"guest_id\": \"...\"})",
+            "get_profile": "GET /api/v1/guest/risk-profile/{guest_id}",
+            "record_booking": "POST /api/v1/guest/booking (body: {\"booking\": {...}})",
+        },
+    }
+
+
 # Allow all origins for testing
 app.add_middleware(
     CORSMiddleware,

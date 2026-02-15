@@ -1,0 +1,211 @@
+{
+  "info": {
+    "name": "Hotel Fraud Detection API",
+    "description": "Hotel Fraud Detection API – fraud scoring, room assignment, demand forecast, FAQ bot, guest risk profiling.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Root & Docs",
+      "item": [
+        {
+          "name": "GET Root",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/",
+            "description": "API info and links to docs."
+          }
+        },
+        {
+          "name": "GET OpenAPI Docs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/docs",
+            "description": "Swagger UI documentation."
+          }
+        }
+      ]
+    },
+    {
+      "name": "FAQ Bot",
+      "item": [
+        {
+          "name": "GET FAQ info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/faq",
+            "description": "FAQ bot description and endpoints."
+          }
+        },
+        {
+          "name": "GET FAQ hotels",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/faq/hotels",
+            "description": "List hotel IDs that have FAQs."
+          }
+        },
+        {
+          "name": "POST FAQ ask",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"What time is check-in?\",\n  \"hotel_id\": \"hotel_001\"\n}"
+            },
+            "url": "{{base_url}}/faq/ask",
+            "description": "Ask the FAQ bot. Omit hotel_id to use all hotels."
+          }
+        },
+        {
+          "name": "POST FAQ ask (all hotels)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Do you have breakfast?\"\n}"
+            },
+            "url": "{{base_url}}/faq/ask",
+            "description": "Ask without hotel_id – uses FAQs from all hotels."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fraud & Rooms",
+      "item": [
+        {
+          "name": "POST Score booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"lead_time_days\": 2,\n    \"checkin_time_hour\": 14,\n    \"length_of_stay\": 1,\n    \"num_guests\": 1,\n    \"total_amount\": 150.0,\n    \"payment_type\": \"card\",\n    \"repeat_guest\": 0,\n    \"num_prev_cancellations\": 0\n  }\n}"
+            },
+            "url": "{{base_url}}/score",
+            "description": "Fraud score for a booking. Missing columns filled with 0."
+          }
+        },
+        {
+          "name": "POST Assign room",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rooms\": [\n    {\n      \"room_number\": \"101\",\n      \"floor\": 1,\n      \"is_clean\": true,\n      \"is_occupied\": false,\n      \"distance_to_elevator\": 5.0\n    },\n    {\n      \"room_number\": \"102\",\n      \"floor\": 1,\n      \"is_clean\": true,\n      \"is_occupied\": false,\n      \"distance_to_elevator\": 10.0\n    },\n    {\n      \"room_number\": \"201\",\n      \"floor\": 2,\n      \"is_clean\": false,\n      \"is_occupied\": false,\n      \"distance_to_elevator\": 3.0\n    }\n  ]\n}"
+            },
+            "url": "{{base_url}}/assign-room",
+            "description": "Returns best available room: clean, vacant, lowest floor, nearest to elevator."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Demand Forecast",
+      "item": [
+        {
+          "name": "POST Forecast demand",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"history\": [\n    {\n      \"date\": \"2024-01-01\",\n      \"occupancy\": 0.75,\n      \"adr\": 150.0,\n      \"revpar\": 112.5,\n      \"avg_lead_time\": 14.5,\n      \"short_lead_ratio\": 0.3,\n      \"cancellation_rate\": 0.05,\n      \"refund_rate\": 0.02,\n      \"local_event\": 0,\n      \"tourism_trend\": 1.2,\n      \"competitor_price\": 145.0\n    },\n    {\n      \"date\": \"2024-01-02\",\n      \"occupancy\": 0.78,\n      \"adr\": 152.0,\n      \"revpar\": 118.56,\n      \"avg_lead_time\": 15.0,\n      \"short_lead_ratio\": 0.28,\n      \"cancellation_rate\": 0.04,\n      \"refund_rate\": 0.02,\n      \"local_event\": 0,\n      \"tourism_trend\": 1.25,\n      \"competitor_price\": 147.0\n    },\n    {\n      \"date\": \"2024-01-03\",\n      \"occupancy\": 0.82,\n      \"adr\": 155.0,\n      \"revpar\": 127.1,\n      \"avg_lead_time\": 16.0,\n      \"short_lead_ratio\": 0.25,\n      \"cancellation_rate\": 0.03,\n      \"refund_rate\": 0.01,\n      \"local_event\": 0,\n      \"tourism_trend\": 1.3,\n      \"competitor_price\": 150.0\n    },\n    {\n      \"date\": \"2024-01-04\",\n      \"occupancy\": 0.80,\n      \"adr\": 153.0,\n      \"revpar\": 122.4,\n      \"avg_lead_time\": 14.0,\n      \"short_lead_ratio\": 0.32,\n      \"cancellation_rate\": 0.05,\n      \"refund_rate\": 0.02,\n      \"local_event\": 0,\n      \"tourism_trend\": 1.28,\n      \"competitor_price\": 148.0\n    },\n    {\n      \"date\": \"2024-01-05\",\n      \"occupancy\": 0.85,\n      \"adr\": 158.0,\n      \"revpar\": 134.3,\n      \"avg_lead_time\": 12.0,\n      \"short_lead_ratio\": 0.35,\n      \"cancellation_rate\": 0.04,\n      \"refund_rate\": 0.01,\n      \"local_event\": 1,\n      \"tourism_trend\": 1.35,\n      \"competitor_price\": 152.0\n    },\n    {\n      \"date\": \"2024-01-06\",\n      \"occupancy\": 0.88,\n      \"adr\": 160.0,\n      \"revpar\": 140.8,\n      \"avg_lead_time\": 10.0,\n      \"short_lead_ratio\": 0.38,\n      \"cancellation_rate\": 0.03,\n      \"refund_rate\": 0.01,\n      \"local_event\": 1,\n      \"tourism_trend\": 1.4,\n      \"competitor_price\": 155.0\n    },\n    {\n      \"date\": \"2024-01-07\",\n      \"occupancy\": 0.82,\n      \"adr\": 156.0,\n      \"revpar\": 127.92,\n      \"avg_lead_time\": 13.0,\n      \"short_lead_ratio\": 0.30,\n      \"cancellation_rate\": 0.04,\n      \"refund_rate\": 0.02,\n      \"local_event\": 0,\n      \"tourism_trend\": 1.32,\n      \"competitor_price\": 153.0\n    }\n  ],\n  \"forecast_days\": 7\n}"
+            },
+            "url": "{{base_url}}/forecast/demand",
+            "description": "Demand forecast. Needs at least 7 days of history for lag features."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Guest Risk",
+      "item": [
+        {
+          "name": "POST Compute risk profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"guest_id\": \"GUEST_123\"\n}"
+            },
+            "url": "{{base_url}}/api/v1/guest/risk-profile",
+            "description": "Compute or refresh guest risk profile from booking records."
+          }
+        },
+        {
+          "name": "GET Risk profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/api/v1/guest/risk-profile/GUEST_123",
+            "description": "Return stored risk profile. Use POST to compute first if none exists."
+          }
+        },
+        {
+          "name": "POST Record booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"booking\": {\n    \"guest_id\": \"GUEST_123\",\n    \"booking_date\": \"2025-02-14\",\n    \"fraud_probability\": 0.65,\n    \"property_id\": \"hotel_001\",\n    \"amount\": 250.0,\n    \"lead_time_days\": 3,\n    \"cancelled\": false,\n    \"refunded\": false,\n    \"no_show\": false,\n    \"dispute\": false,\n    \"chargeback\": false\n  }\n}"
+            },
+            "url": "{{base_url}}/api/v1/guest/booking",
+            "description": "Record booking outcome after fraud scoring. Feeds guest risk aggregation."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "role": "user",
+  "template": "Hotel FAQs:\n{{FAQ_LIST}}\n\nUser question:\n\"{{USER_QUESTION}}\"\n\nSelect the single FAQ ID that best answers the user's question.\nIf no FAQ clearly matches, respond with NONE.\n\nRespond with ONLY the FAQ ID or NONE."
+}

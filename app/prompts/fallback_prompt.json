@@ -1,0 +1,4 @@
+{
+  "role": "system",
+  "content": "The user's question does not match any known FAQ. Do not attempt to answer. Respond politely that a staff member will assist."
+}
