@@ -47,7 +47,10 @@ class ModelRegistry:
         self.loaded_artifacts = {}
 
     def load_version(self, service: str, version: str):
-        config = self.models[service]["versions"][version]
+        config = self.models[service].get("versions", {}).get(version)
+        if not config:
+            print(f"No configuration for {service} version {version}")
+            return
         artifacts = {}
         try:
             for key, filename in config.items():
@@ -56,11 +59,12 @@ class ModelRegistry:
             print(f"Loaded {service} model {version} successfully.")
         except Exception as e:
             print(f"Error loading {service} model {version}: {e}")
-            raise RuntimeError(f"Critical error loading {service}:{version}")
+            # Do NOT raise fatal error during startup or background loading
+
 
     def get_model(self, service: str):
         # Weighted random selection for A/B testing
-        split = self.models[service]["traffic_split"]
+        split = self.models.get(service, {}).get("traffic_split", {"v1": 1.0})
         versions = list(split.keys())
         weights = list(split.values())
         selected_version = random.choices(versions, weights=weights)[0]
@@ -69,7 +73,12 @@ class ModelRegistry:
         if key not in self.loaded_artifacts:
             self.load_version(service, selected_version)
             
+        # Return artifacts if loaded, otherwise raise 404/503 at endpoint level
+        if key not in self.loaded_artifacts:
+            raise HTTPException(status_code=503, detail=f"Model service {service}:{selected_version} is currently unavailable.")
+            
         return selected_version, self.loaded_artifacts[key]
+
 
 # Initialize Registry
 registry = ModelRegistry()
@@ -81,6 +90,9 @@ try:
     registry.load_version("in-stay", "v1")
 except Exception as e:
     print(f"Initial model loading failed: {e}")
+
+# Global Constants
+BEST_THRESHOLD = 0.42
 
 # --- App Initialization ---
 app = FastAPI(title="Hotel Fraud Detection API")
