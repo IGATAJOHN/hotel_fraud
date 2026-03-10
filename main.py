@@ -14,6 +14,14 @@ import shap
 import random
 import uuid
 
+from risk_engine.feature_builder import compute_features, prepare_demand_features
+from risk_engine.policy import BEST_THRESHOLD, SARRecord, sar_reports, generate_sar_narrative, determine_action
+from risk_engine.composite import (
+    explain_anomaly, estimate_elasticity, dynamic_pricing_logic,
+    compute_upsell_score, generate_upsell_offer, compute_loyalty_score, generate_loyalty_action,
+    compute_final_risk
+)
+
 # --- A/B Testing & Rollback Infrastructure ---
 class ModelRegistry:
     def __init__(self):
@@ -21,15 +29,15 @@ class ModelRegistry:
             "fraud": {
                 "active_version": "v1",
                 "versions": {
-                    "v1": {"path": "model.pkl", "explainer": "explainer.pkl", "features": "feature_columns.pkl"},
-                    "v2": {"path": "model.pkl", "explainer": "explainer.pkl", "features": "feature_columns.pkl"}
+                    "v1": {"path": "models/booking_model.pkl", "explainer": "artifacts/booking_explainer.pkl", "features": "artifacts/feature_columns.pkl"},
+                    "v2": {"path": "models/booking_model.pkl", "explainer": "artifacts/booking_explainer.pkl", "features": "artifacts/feature_columns.pkl"}
                 },
                 "traffic_split": {"v1": 1.0} # Version -> Percentage (0.0 to 1.0)
             },
             "demand": {
                 "active_version": "v1",
                 "versions": {
-                    "v1": {"path": "demand_forecast_lgbm_v1.pkl", "features": "demand_forecast_features_v1.pkl", "metadata": "demand_forecast_metadata_v1.pkl"}
+                    "v1": {"path": "models/demand_forecast_lgbm_v1.pkl", "features": "artifacts/demand_forecast_features_v1.pkl", "metadata": "artifacts/demand_forecast_metadata_v1.pkl"}
                 },
                 "traffic_split": {"v1": 1.0}
             },
@@ -37,8 +45,8 @@ class ModelRegistry:
                 "active_version": "v1",
                 "versions": {
                     "v1": {
-                        "path": "in_stay_anomaly_v1.pkl", 
-                        "scaler": "in_stay_scaler_v1.pkl"
+                        "path": "models/instay_model.pkl", 
+                        "scaler": "artifacts/in_stay_scaler_v1.pkl"
                     }
                 },
                 "traffic_split": {"v1": 1.0}
@@ -90,9 +98,6 @@ try:
     registry.load_version("in-stay", "v1")
 except Exception as e:
     print(f"Initial model loading failed: {e}")
-
-# Global Constants
-BEST_THRESHOLD = 0.42
 
 # --- App Initialization ---
 app = FastAPI(title="Hotel Fraud Detection API")
@@ -199,51 +204,6 @@ class RecommendationRequest(BaseModel):
     channel_source: str # e.g., "direct", "ota", "corporate"
 
 
-class SARRecord(BaseModel):
-    booking_id: str
-    fraud_score: float
-    timestamp: date
-    narrative: str
-    top_indicators: List[str]
-    status: str = "Filed"
-
-# In-memory storage for auto-filed reports (mock database)
-sar_reports: List[SARRecord] = []
-
-def compute_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.sort_values("date").reset_index(drop=True)
-
-    # Time features
-    df["day_of_week"] = df["date"].dt.dayofweek
-    df["week"] = df["date"].dt.isocalendar().week.astype(int)
-    df["month"] = df["date"].dt.month
-    df["is_weekend"] = df["day_of_week"].isin([5, 6]).astype(int)
-
-    # Lag features
-    df["occupancy_lag_1"] = df["occupancy"].shift(1)
-    df["occupancy_lag_7"] = df["occupancy"].shift(7)
-    df["adr_lag_7"] = df["adr"].shift(7)
-
-    # Rolling features
-    df["occ_roll_3"] = df["occupancy"].rolling(3).mean()
-    df["occ_roll_7"] = df["occupancy"].rolling(7).mean()
-    df["adr_roll_7"] = df["adr"].rolling(7).mean()
-    df["occ_std_7"] = df["occupancy"].rolling(7).std()
-
-    return df
-
-def prepare_demand_features(history: List[DemandHistoryRow]) -> pd.DataFrame:
-    df = pd.DataFrame([h.dict() for h in history])
-    df["date"] = pd.to_datetime(df["date"])
-    
-    df = compute_features(df)
-    df = df.dropna().reset_index(drop=True)
-
-    if df.empty:
-        raise ValueError("Not enough historical data to compute features")
-
-    return df
-
 @app.post("/assign-room")
 def assign_room(request: AssignmentRequest):
     """
@@ -280,11 +240,16 @@ def assign_room(request: AssignmentRequest):
 
 @app.post("/score")
 def score_booking(request: BookingRequest):
-    # Get model from registry
-    version, artifacts = registry.get_model("fraud")
-    model = artifacts["path"]
-    explainer = artifacts["explainer"]
-    features = artifacts["features"]
+    # Get models from registry
+    version, fraud_artifacts = registry.get_model("fraud")
+    _, instay_artifacts = registry.get_model("in-stay")
+    
+    booking_model = fraud_artifacts["path"]
+    explainer = fraud_artifacts["explainer"]
+    features = fraud_artifacts["features"]
+    
+    instay_model = instay_artifacts["path"]
+    anomaly_scaler = instay_artifacts["scaler"]
 
     # Convert input to DataFrame
     X = pd.DataFrame([request.data])
@@ -297,17 +262,47 @@ def score_booking(request: BookingRequest):
     X = X.rename(columns=ALIASES)
 
     # Ensure all required columns exist, fill missing with 0, and order correctly
-    X = X.reindex(columns=features, fill_value=0)
+    X_booking = X.reindex(columns=features, fill_value=0)
 
-    # Predict probability
-    fraud_proba = model.predict_proba(X)[0, 1]
+    # Predict booking probability
+    booking_score = float(booking_model.predict_proba(X_booking)[0, 1])
+
+    # Predict behavior probability
+    try:
+        X_instay = X.reindex(columns=[
+            'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
+            'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
+            'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
+            'access_rate', 'service_intensity', 'stay_length'
+        ], fill_value=0)
+        X_scaled = anomaly_scaler.transform(X_instay)
+        behavior_score = abs(float(instay_model.decision_function(X_scaled)[0]))
+    except Exception as e:
+        print(f"In-stay prediction error: {e}")
+        behavior_score = 0.0
+
+    # Composite Risk
+    # Assuming payment and network are placeholders for now
+    payment_score = 0.0
+    network_score = 0.0
+
+    final_score = compute_final_risk(
+        booking=booking_score,
+        payment=payment_score,
+        behavior=behavior_score,
+        network=network_score
+    )
+
+    action_result = determine_action(final_score)
+    tier = action_result["tier"]
+    action = action_result["action"]
 
     # Decision
-    flagged = fraud_proba >= BEST_THRESHOLD
+    flagged = final_score >= BEST_THRESHOLD
 
     # SHAP explanation
     try:
-        shap_values = explainer.shap_values(X)
+        shap_values = explainer.shap_values(X_booking)
         if isinstance(shap_values, list):
             vals = shap_values[0] if len(shap_values) == 1 else shap_values[1]
         else:
@@ -327,14 +322,14 @@ def score_booking(request: BookingRequest):
         print(f"SHAP explanation error: {e}")
         top_features = ["Explanation unavailable"]
 
-    # SAR Auto-Filing (Critical Threshold = 0.85)
+    # SAR Auto-Filing 
     filed_sar = False
-    if fraud_proba >= 0.85:
-        narrative = generate_sar_narrative(fraud_proba, top_features, request.data)
+    if action == "Auto SAR Filing":
+        narrative = generate_sar_narrative(final_score, top_features, request.data)
         import uuid
         sar_record = SARRecord(
             booking_id=str(uuid.uuid4())[:8],
-            fraud_score=round(float(fraud_proba), 4),
+            fraud_score=final_score,
             timestamp=date.today(),
             narrative=narrative,
             top_indicators=top_features
@@ -343,11 +338,20 @@ def score_booking(request: BookingRequest):
         filed_sar = True
 
     return {
-        "fraud_probability": round(float(fraud_proba), 4),
+        "booking_id": request.data.get("booking_id", "unknown"),
+        "risk_scores": {
+            "booking": round(booking_score, 4),
+            "payment": round(payment_score, 4),
+            "behavior": round(behavior_score, 4),
+            "network": round(network_score, 4)
+        },
+        "final_risk_score": final_score,
+        "risk_tier": tier,
+        "recommended_action": action,
         "flagged_for_review": bool(flagged),
         "top_reasons": top_features,
         "model_info": {
-            "service": "fraud",
+            "service": "risk-evaluator",
             "version": version
         },
         "compliance": {
@@ -362,27 +366,6 @@ def get_compliance_reports():
         "total_filed": len(sar_reports),
         "reports": sar_reports
     }
-
-def generate_sar_narrative(score: float, top_features: List[str], input_data: dict) -> str:
-    """
-    Generates a formal SAR narrative based on fraud indicators.
-    """
-    date_str = date.today().isoformat()
-    indicators_str = ", ".join(top_features)
-    
-    narrative = (
-        f"Suspicious Activity Report generated on {date_str}. "
-        f"The system detected a high-risk booking with a probability score of {round(score, 4)}. "
-        f"Primary indicators of concern include: {indicators_str}. "
-    )
-    
-    # Add context from input data if available
-    if "lead_time" in input_data or "lead_time_days" in input_data:
-        lt = input_data.get("lead_time") or input_data.get("lead_time_days")
-        narrative += f"Of particular note is the lead time of {lt} days. "
-        
-    narrative += "This booking has been intercepted and flagged for mandatory compliance review."
-    return narrative
 
 @app.post("/forecast/demand")
 def forecast_demand(request: DemandForecastRequest):
@@ -455,49 +438,6 @@ def forecast_demand(request: DemandForecastRequest):
         "forecast_days": request.forecast_days,
         "forecast": forecasts
     }
-
-def explain_anomaly(input_df: pd.DataFrame, artifacts: dict):
-    explanations = []
-    
-    # Define features inside function to avoid global dependencies
-    features = [
-        'room_access_count', 'dnd_hours', 'visitor_count', 'noise_complaints', 
-        'service_usage_count', 'cleaning_duration_minutes', 'maintenance_issues', 
-        'maintenance_resolution_hours', 'staff_overtime_hours', 'guest_rating_staff', 
-        'access_rate', 'service_intensity', 'stay_length'
-    ]
-    
-    # Try to get means and stds from artifacts, fallback to simple placeholder if missing
-    means = artifacts.get("means")
-    stds = artifacts.get("stds")
-    
-    if not means or not stds:
-        return [{"feature": "Stats Unavailable", "value": 0, "z_score": 0, "direction": "N/A"}]
-
-    for col in features:
-        if col not in input_df.columns:
-            continue
-        value = input_df.iloc[0][col]
-        mean = means.get(col, 0)
-        std = stds.get(col, 1)
-
-        z_score = (value - mean) / std if std != 0 else 0
-
-        explanations.append({
-            "feature": col,
-            "value": round(float(value), 3),
-            "z_score": round(float(z_score), 3),
-            "direction": "High" if z_score > 0 else "Low"
-        })
-
-    # sort by absolute deviation
-    explanations = sorted(
-        explanations,
-        key=lambda x: abs(x["z_score"]),
-        reverse=True
-    )
-
-    return explanations[:3]
 
 @app.post("/monitor/in-stay")
 def detect_in_stay_anomaly(request: InStayRequest):
@@ -589,101 +529,6 @@ def rollback_model(request: RollbackRequest):
         "new_split": registry.models[service]["traffic_split"]
     }
 
-def estimate_elasticity(history: List[dict]) -> float:
-    """
-    Estimates price elasticity of demand using simple log-linear regression:
-    log(Occupancy) = alpha + beta * log(ADR)
-    The coefficient 'beta' is the price elasticity.
-    """
-    if len(history) < 5:
-        return -1.5 # Default inelastic assumption for hotels
-    
-    df = pd.DataFrame(history)
-    
-    # Filter for valid data
-    df = df[(df["occupancy"] > 0) & (df["adr"] > 0)]
-    
-    if len(df) < 3:
-        return -1.5
-
-    # Log transformation
-    y = np.log(df["occupancy"])
-    X = np.log(df["adr"])
-    
-    # Simple linear regression (slope)
-    # beta = sum((x - mean_x) * (y - mean_y)) / sum((x - mean_x)^2)
-    X_mean = np.mean(X)
-    y_mean = np.mean(y)
-    
-    numerator = np.sum((X - X_mean) * (y - y_mean))
-    denominator = np.sum((X - X_mean)**2)
-    
-    if denominator == 0:
-        return -1.5
-        
-    beta = float(numerator / denominator)
-    
-    # Sanity check: Elasticity for hotels is typically between -0.5 and -3.0
-    return max(-5.0, min(-0.1, beta))
-
-def dynamic_pricing_logic(data: PricingRequest):
-    # Determine elasticity
-    elasticity = data.elasticity
-    if elasticity is None and data.historical_data:
-        elasticity = float(estimate_elasticity(data.historical_data))
-    
-    # Fallback to inelastic default if still None/0
-    if not elasticity:
-        elasticity = -1.5
-
-    adjustment = 0.0
-    demand_level = "Moderate"
-
-    if data.upper_ci > 0.85:
-        adjustment = 0.12
-        demand_level = "Very High"
-    elif data.upper_ci > 0.70:
-        adjustment = 0.07
-        demand_level = "High"
-    elif data.upper_ci > 0.55:
-        adjustment = 0.0
-        demand_level = "Moderate"
-    elif data.upper_ci > 0.40:
-        adjustment = -0.06
-        demand_level = "Soft"
-    else:
-        adjustment = -0.10
-        demand_level = "Weak"
-
-    # Elasticity Modifier: 
-    # If guests are sensitive (e.g., -3.0), we dampen the increase.
-    # If guests are inelastic (e.g., -0.5), we can push the increase higher.
-    # Baseline elasticity = -1.5. 
-    elasticity_modifier = float(-1.5 / elasticity)
-    elasticity_modifier = max(0.5, min(2.0, elasticity_modifier))
-    
-    # Apply modifier only to price increases (to avoid dropping price too fast on sensitive demand)
-    if adjustment > 0:
-        adjustment *= elasticity_modifier
-
-    # Seasonal boost
-    if data.season.lower() in ["peak", "peak season", "holiday"]:
-        adjustment += 0.05
-
-    recommended_price = float(data.current_adr * (1 + adjustment))
-
-    # Competitor guardrail
-    max_price = float(data.competitor_price * 1.15)
-    recommended_price = min(recommended_price, max_price)
-
-    return {
-        "demand_level": demand_level,
-        "estimated_elasticity": round(float(elasticity), 3),
-        "adjustment_percent": round(float(adjustment) * 100, 2),
-        "recommended_price": round(float(recommended_price), 2),
-        "guardrail_applied": bool(recommended_price == max_price)
-    }
-
 @app.post("/pricing/recommend")
 def recommend_price(request: PricingRequest):
     result = dynamic_pricing_logic(request)
@@ -717,47 +562,3 @@ def generate_recommendations(request: RecommendationRequest):
         }
     }
 
-def compute_upsell_score(data: RecommendationRequest):
-    score = 0
-    if data.stay_length >= 3:
-        score += 0.2
-    if data.service_usage_count > 2:
-        score += 0.2
-    if data.guest_rating_staff >= 4:
-        score += 0.2
-    if data.refund_rate < 0.1:
-        score += 0.2
-    if data.room_price > 120:
-        score += 0.2
-    return min(score, 1.0)
-
-def generate_upsell_offer(score: float):
-    if score > 0.8:
-        return {"offer": "Premium Suite Upgrade", "discount": 0, "confidence": "High"}
-    elif score > 0.6:
-        return {"offer": "Late Checkout + Breakfast Bundle", "discount": 5, "confidence": "Medium"}
-    elif score > 0.4:
-        return {"offer": "Spa Discount", "discount": 10, "confidence": "Moderate"}
-    else:
-        return {"offer": "No Upsell", "confidence": "Low"}
-
-def compute_loyalty_score(data: RecommendationRequest):
-    score = 0
-    score += min(data.booking_history_count * 0.1, 0.4)
-    if data.cancellation_history == 0:
-        score += 0.2
-    if data.refund_history == 0:
-        score += 0.2
-    if data.channel_source == "direct":
-        score += 0.2
-    return min(score, 1.0)
-
-def generate_loyalty_action(score: float):
-    if score > 0.8:
-        return "Gold Tier – Exclusive Member Perks"
-    elif score > 0.6:
-        return "Silver Tier – 10% Rebooking Discount"
-    elif score > 0.4:
-        return "Bronze Tier – 5% Next Stay Coupon"
-    else:
-        return "Standard Guest"
